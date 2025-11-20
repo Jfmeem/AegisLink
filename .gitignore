@@ -1,0 +1,44 @@
+# ========================
+# Visual Studio temporary files
+# ========================
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ========================
+# Build directories
+# ========================
+Debug/
+Release/
+x64/Debug/
+x64/Release/
+
+# ========================
+# Compiled object files and executables
+# ========================
+*.obj
+*.exe
+*.pdb
+*.idb
+*.ipch
+*.log
+*.tlog
+*.lastbuildstate
+
+# ========================
+# Visual Studio database and temp files
+# ========================
+*.ncb
+*.aps
+*.pch
+*.res
+
+# ========================
+# Client and Server specific build folders
+# ========================
+Client/Debug/
+Client/Release/
+Server/Debug/
+Server/Release/
