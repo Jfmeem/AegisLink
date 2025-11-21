@@ -3,6 +3,8 @@
 #include<WS2tcpip.h>
 #include<string>
 #include<thread>
+#include<cstdio>
+#include<limits>
 
 using namespace std;
 
@@ -16,6 +18,54 @@ bool Initialization() {
 
 }
 
+void SendFile(SOCKET s) {
+	if (cin.peek() == '\n') cin.ignore();
+	string filename;
+	cout << "Enter file name to send: ";
+	getline(cin, filename);
+
+	FILE* fp = fopen(filename.c_str(), "rb");
+	if (fp == NULL) {
+		cout << "File not found!" << endl;
+		return;
+	}
+
+	//get file size
+	fseek(fp, 0, SEEK_END);
+	long filesize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
+	//send file transfer cmd
+	string cmd = "file_transfer";
+	send(s, cmd.c_str(), cmd.size(), 0);
+
+	Sleep(100);
+
+	//send filename length
+	int filenamelen = filename.size();
+	send(s, reinterpret_cast<char*>(&filenamelen), sizeof(filenamelen), 0);
+	send(s, filename.c_str(), filenamelen, 0);
+
+	//send file size
+	send(s, reinterpret_cast<char*>(&filesize), sizeof(filesize), 0);
+
+	//send file data in chunks
+	char buffer[1024];
+	int bytesRead;
+
+	cout << "Sending file...." << endl;
+
+	while ((bytesRead = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+		send(s, buffer, bytesRead, 0);
+	}
+
+	fclose(fp);
+
+	cout << "File transfer completed!" << endl;
+
+	return;
+}
+
 void SendMsg(SOCKET s) {
 	cout << "Enter your name: ";
 
@@ -26,6 +76,13 @@ void SendMsg(SOCKET s) {
 
 	while (1) {
 		getline(cin, message);
+
+		// file send cmd 
+		if (message == "sendfile") {
+			thread t(SendFile, s);
+			t.detach();
+			continue;
+		}
 		string msg = name + " : " + message;
 
 		int bytesent = send(s, msg.c_str(), msg.size(), 0);
