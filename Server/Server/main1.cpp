@@ -4,6 +4,8 @@
 #include <tchar.h>
 #include<thread>
 #include<vector>
+#include<algorithm>
+#include<cstdio>
 
 using namespace std;
 
@@ -18,6 +20,42 @@ bool Initialize() {
 
 	return (res == 0); //if true return success
 
+}
+
+void recievedFile(SOCKET clientSocket) {
+	int filenameLen;
+	recv(clientSocket, reinterpret_cast<char*>(&filenameLen), sizeof(filenameLen), 0);
+
+	char fname[256];
+	recv(clientSocket, fname, filenameLen, 0);
+	fname[filenameLen] = '\0';
+
+	long filesize;
+	recv(clientSocket, reinterpret_cast<char*>(&filesize), sizeof(filesize), 0);
+
+	FILE* fp = fopen(fname, "wb");
+	if (!fp) {
+		cout << "did not able to open the file." << endl;
+	}
+
+	char buffer[1024];
+	long totalReceived = 0;
+	while (totalReceived < filesize) {
+		int bytes = recv(clientSocket, buffer, sizeof(buffer), 0);
+		
+		if (bytes <= 0) {
+			cout << "client disconnected." << endl;
+			break;
+		}
+
+		fwrite(buffer, 1, bytes, fp);
+		totalReceived += bytes;
+	}
+
+	fclose(fp);
+
+	cout << "File \"" << fname << "\" received successfully!" << endl;
+	
 }
 
 void InterectWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
@@ -36,8 +74,16 @@ void InterectWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
 
 		//message print
 		string message(buffer, byterecvd);
-		cout << "Print message: " << message << endl;
 
+		//check for file transfer
+		if (message == "file_transfer") {
+			recievedFile(clientSocket);
+			continue;
+		}
+
+		cout << "Message: " << message << endl;
+
+		//broadcast to other clients
 		for (auto client : Clients) {
 			if (client != clientSocket) {
 				send(client, message.c_str(), message.size(), 0);
@@ -60,8 +106,6 @@ int main() {
 		cout << " winsock Initialization failed" << endl;
 		return 1;
 	}
-
-	cout << "fucking spl" << endl;
 
 	//cretaing socket
 
@@ -113,12 +157,13 @@ int main() {
 
 		SOCKET clientSocket = accept(listenSocket, NULL, NULL);
 		if (clientSocket == INVALID_SOCKET) {
-			cout << "invalid client socket" << endl;
+			cout << "failed to accept client." << endl;
+			continue;
 		}
 
 		Clients.push_back(clientSocket);
 
-		thread t1(InterectWithClient, clientSocket, std::ref(Clients));
+		thread t1(InterectWithClient, clientSocket, ref(Clients));
 
 		t1.detach();
 
@@ -127,8 +172,7 @@ int main() {
 	
 
 	closesocket(listenSocket);
-
-	//Finalize
 	WSACleanup();
+
 	return 0;
 }
