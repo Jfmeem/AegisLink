@@ -56,3 +56,4 @@ target/
 # C/C++
 *.o
 *.obj
+*.vs/
