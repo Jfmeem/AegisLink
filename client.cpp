@@ -1,6 +1,6 @@
 #include<iostream>
-#include<Winsock2.h>
-#include<WS2tcpip.h>
+#include<winsock2.h>
+#include<wS2tcpip.h>
 #include<string>
 #include<thread>
 #include<cstdio>
@@ -24,7 +24,8 @@ void SendFile(SOCKET s) {
 	cout << "Enter file name to send: ";
 	getline(cin, filename);
 
-	FILE* fp = fopen(filename.c_str(), "rb");
+	FILE* fp;
+	fopen_s(&fp, filename.c_str(), "rb");
 	if (fp == NULL) {
 		cout << "File not found!" << endl;
 		return;
@@ -93,6 +94,7 @@ void SendMsg(SOCKET s) {
 
 		if (message == "Quit") {
 			cout << "Stopping the application." << endl;
+			break;
 		}
 	}
 
