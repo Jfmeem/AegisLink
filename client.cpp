@@ -5,10 +5,14 @@
 #include<thread>
 #include<cstdio>
 #include<limits>
+#include "DES.h"
 
 using namespace std;
 
 #pragma comment(lib, "ws2_32.lib")
+
+//shared encryption key
+const string ENCRYPTION_KEY = "mykey123";
 
 //initialization
 bool Initialization() {
@@ -36,10 +40,21 @@ void SendFile(SOCKET s) {
 	long filesize = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 
+	//read entire file into memory
+	char* fileData = new char[filesize];
+	fread(fileData, 1, filesize, fp);
+	fclose(fp);
+
+	//convert file data to string for encryption
+	string fileContent(fileData, filesize);
+	delete[] fileData;
+	//encrypt the file content
+	cout << "Encrypting file..."<<endl;
+	string encryptedContent = encryptString(fileContent, ENCRYPTION_KEY);
+
 	//send file transfer cmd
 	string cmd = "file_transfer";
 	send(s, cmd.c_str(), cmd.size(), 0);
-
 	Sleep(100);
 
 	//send filename length
@@ -47,32 +62,34 @@ void SendFile(SOCKET s) {
 	send(s, reinterpret_cast<char*>(&filenamelen), sizeof(filenamelen), 0);
 	send(s, filename.c_str(), filenamelen, 0);
 
-	//send file size
-	send(s, reinterpret_cast<char*>(&filesize), sizeof(filesize), 0);
+	//send encrypted file size
+	long encryptedSize = encryptedContent.size();
+	send(s, reinterpret_cast<char*>(&encryptedSize), sizeof(encryptedSize), 0);
 
-	//send file data in chunks
-	char buffer[1024];
-	int bytesRead;
+	////send file size
+	//send(s, reinterpret_cast<char*>(&filesize), sizeof(filesize), 0);
 
-	cout << "Sending file...." << endl;
-
-	while ((bytesRead = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
-		send(s, buffer, bytesRead, 0);
+	cout << "Sending encrypted file...." << endl;
+	const char* dataPtr = encryptedContent.c_str();
+	long totalSent = 0;
+	while (totalSent < encryptedSize) {
+		int chunkSize = min(1024L, encryptedSize - totalSent);
+		int sent = send(s, dataPtr + totalSent, chunkSize, 0);
+		if (sent == SOCKET_ERROR) {
+			cout << "Error sending file!" << endl;
+			return;
+		}
+		totalSent += sent;
 	}
 
-	fclose(fp);
-
-	cout << "File transfer completed!" << endl;
-
+	cout << "File encrypted and sent successfully!" << endl;
 	return;
 }
 
 void SendMsg(SOCKET s) {
 	cout << "Enter your name: ";
-
 	string name;
 	getline(cin, name);
-
 	string message;
 
 	while (1) {
@@ -86,7 +103,10 @@ void SendMsg(SOCKET s) {
 		}
 		string msg = name + " : " + message;
 
-		int bytesent = send(s, msg.c_str(), msg.size(), 0);
+		//encrypt the msg
+		string encryptedMsg = encryptString(msg, ENCRYPTION_KEY);
+		//send encrypted msg
+		int bytesent = send(s,encryptedMsg.c_str(), encryptedMsg.size(), 0);
 		if (bytesent == SOCKET_ERROR) {
 			cout << "Error sending message!" << endl;
 			break;
@@ -111,16 +131,18 @@ void ReceiveMsg(SOCKET s) {
 			break;
 		}
 		else {
-			msg = string(buffer, rcvLength);
-			cout << msg << endl;
+		//decrypt the received msg
+			string encryptedMsg(buffer, rcvLength);
+			string decryptingMsg = decryptString(encryptedMsg, ENCRYPTION_KEY);
+			cout << decryptedMsg << endl;
 		}
 	}
 
 }
 
 int main() {
-
-
+	
+	cout << "----Encrypted Client----" <<endl;
 	cout << "client program started!" << endl;
 
 	if (!Initialization()) {
@@ -153,11 +175,11 @@ int main() {
 	}
 
 	cout << "successfully connect to the server!" << endl;
+	cout << "All messages and files will be encrypted with DES" << endl;
 
 	//creating thread
 	thread senderthread(SendMsg, s);
 	thread receivethread(ReceiveMsg, s);
-
 	senderthread.join();
 	receivethread.join();
 

@@ -6,22 +6,20 @@
 #include<vector>
 #include<algorithm>
 #include<cstdio>
-
+#include "DES.h"
 using namespace std;
-
 #pragma comment(lib, "ws2_32.lib")
+
+const string ENCRYPTION_KEY = "mykey123";
 
 //step-1: initialize 
 bool Initialize() {
-
 	WSADATA data; //structure for winsock info
-
 	int res = WSAStartup(MAKEWORD(2, 2), &data); // starrt winsock library
-
 	return (res == 0); //if true return success
 
 }
-
+//function to receive and decrypt file
 void recievedFile(SOCKET clientSocket) {
 	int filenameLen;
 	recv(clientSocket, reinterpret_cast<char*>(&filenameLen), sizeof(filenameLen), 0);
@@ -30,15 +28,42 @@ void recievedFile(SOCKET clientSocket) {
 	recv(clientSocket, fname, filenameLen, 0);
 	fname[filenameLen] = '\0';
 
-	long filesize;
-	recv(clientSocket, reinterpret_cast<char*>(&filesize), sizeof(filesize), 0);
+	long encryptedFilesize;
+	recv(clientSocket, reinterpret_cast<char*>(&encryptedFilesize), sizeof(encryptedFilesize), 0);
 
-	FILE* fp = fopen(fname, "wb");
-	if (!fp) {
-		cout << "did not able to open the file." << endl;
+	cout << "Receiving encrypted file: " << fname << "(" << encryptedFilesize << " bytes)" <<endl;
+	//received encrypted file data
+	char* encryptedData = new char[encryptedFilesize];
+	long totalReceived = 0;
+
+	while (totalReceived < encryptedFilesize) {
+		int bytes = recv(clientSocket, encryptedData + totalReceived, encryptedFilesize - totalReceived, 0);
+		if (bytes <= 0) {
+			cout << "client disconnected during file transfer." << endl;
+			delete[] encryptedData;
+			return;
+		}
+		totalReceived += bytes; 
 	}
+	//decrypting the file content
+	cout << "Decrypting file..." << endl;
+	string encryptedContent(encryptedData, encryptedFilesize);
+	delete[] encryptedData;
 
-	char buffer[1024];
+	string decryptedContent = decryptString(encryptedContent, ENCRYPTION_KEY);
+
+	FILE* fp;
+	fopen_s(&fp, fname, "wb");
+	if (!fp) {
+		cout << "Could not open file for writing." << endl;
+	}
+	
+	fwrite(decryptedContent.c_str(), 1, decryptedContent.size(), fp);
+	fclose(fp);
+
+	cout << "File \"" << fname << "\" received and decrypted successfully!" << endl;
+
+	/*char buffer[1024];
 	long totalReceived = 0;
 	while (totalReceived < filesize) {
 		int bytes = recv(clientSocket, buffer, sizeof(buffer), 0);
@@ -54,7 +79,7 @@ void recievedFile(SOCKET clientSocket) {
 
 	fclose(fp);
 
-	cout << "File \"" << fname << "\" received successfully!" << endl;
+	cout << "File \"" << fname << "\" received successfully!" << endl;*/
 	
 }
 
@@ -66,32 +91,35 @@ void InterectWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
 	
 	while (1) {
 		int byterecvd = recv(clientSocket, buffer, sizeof(buffer), 0);
-
 		if (byterecvd <= 0) {
 			cout << "Client Disconnected!" << endl;
 			break;
 		}
+		
+		//received encrypted data
+		string encryptedMessage(buffer, byterecvd);
 
-		//message print
-		string message(buffer, byterecvd);
+		//decrypt the msg
+		string decryptedMessage = decryptString(encryptedMessage, ENCRYPTION_KEY);
 
-		//check for file transfer
-		if (message == "file_transfer") {
+		//check for file transfer command
+		if (decryptedMessage == "file_transfer") {
 			recievedFile(clientSocket);
 			continue;
 		}
 
-		cout << "Message: " << message << endl;
+		cout << "Message (decrypted): " << decryptedMessage << endl;
 
-		//broadcast to other clients
+		//broadcast to other clients(keep it encrypted for transmission
 		for (auto client : Clients) {
 			if (client != clientSocket) {
-				send(client, message.c_str(), message.size(), 0);
+				send(client, encryptedMessage.c_str(), encryptedMessage.size(), 0);
 			}
 		}
 
 	}
 
+	//Remove disconnected client
 	auto it = find(Clients.begin(), Clients.end(), clientSocket);
 	if (it != Clients.end()) {
 		Clients.erase(it);
@@ -101,7 +129,8 @@ void InterectWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
 }
 
 int main() {
-	cout << "SPL_1" << endl;
+	cout << "---Encrypted server---"<<endl;
+	cout << "Using DES encryption"<<endl;
 
 	if (!Initialize()) {
 		cout << " winsock Initialization failed" << endl;
@@ -149,6 +178,8 @@ int main() {
 	}
 
 	cout << "server has started listening on port:" << port << endl;
+	cout <<"All communication will be encrypted with DES" << endl;
+
 	//for multiple client msg
 	vector<SOCKET> Clients;
 
@@ -161,19 +192,12 @@ int main() {
 			cout << "failed to accept client." << endl;
 			continue;
 		}
-
 		Clients.push_back(clientSocket);
-
 		thread t1(InterectWithClient, clientSocket, ref(Clients));
-
 		t1.detach();
 
 	}
-
-	
-
 	closesocket(listenSocket);
 	WSACleanup();
-	//------
 	return 0;
 }
