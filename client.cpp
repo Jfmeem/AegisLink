@@ -6,9 +6,7 @@
 #include<cstdio>
 #include<limits>
 #include "DES.h"
-
 using namespace std;
-
 #pragma comment(lib, "ws2_32.lib")
 
 //shared encryption key
