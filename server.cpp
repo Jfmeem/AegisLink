@@ -63,23 +63,6 @@ void recievedFile(SOCKET clientSocket) {
 
 	cout << "File \"" << fname << "\" received and decrypted successfully!" << endl;
 
-	/*char buffer[1024];
-	long totalReceived = 0;
-	while (totalReceived < filesize) {
-		int bytes = recv(clientSocket, buffer, sizeof(buffer), 0);
-		
-		if (bytes <= 0) {
-			cout << "client disconnected." << endl;
-			break;
-		}
-
-		fwrite(buffer, 1, bytes, fp);
-		totalReceived += bytes;
-	}
-
-	fclose(fp);
-
-	cout << "File \"" << fname << "\" received successfully!" << endl;*/
 	
 }
 

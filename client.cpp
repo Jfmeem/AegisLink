@@ -5,6 +5,7 @@
 #include<thread>
 #include<cstdio>
 #include<limits>
+#include<algorithm>
 #include "DES.h"
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
@@ -52,7 +53,8 @@ void SendFile(SOCKET s) {
 
 	//send file transfer cmd
 	string cmd = "file_transfer";
-	send(s, cmd.c_str(), cmd.size(), 0);
+	string encryptedCmd = encryptString(cmd, ENCRYPTION_KEY);
+	send(s, encryptedCmd.c_str(), encryptedCmd.size(), 0);
 	Sleep(100);
 
 	//send filename length
@@ -71,7 +73,8 @@ void SendFile(SOCKET s) {
 	const char* dataPtr = encryptedContent.c_str();
 	long totalSent = 0;
 	while (totalSent < encryptedSize) {
-		int chunkSize = min(1024L, encryptedSize - totalSent);
+		long remaining = encryptedSize - totalSent; 
+		int chunkSize = (remaining < 1024L) ? (int)remaining : 1024;
 		int sent = send(s, dataPtr + totalSent, chunkSize, 0);
 		if (sent == SOCKET_ERROR) {
 			cout << "Error sending file!" << endl;
@@ -95,8 +98,9 @@ void SendMsg(SOCKET s) {
 
 		// file send cmd 
 		if (message == "sendfile") {
-			thread t(SendFile, s);
-			t.detach();
+			SendFile(s);
+			/*thread t(SendFile, s);
+			t.detach();*/
 			continue;
 		}
 		string msg = name + " : " + message;
@@ -131,7 +135,7 @@ void ReceiveMsg(SOCKET s) {
 		else {
 		//decrypt the received msg
 			string encryptedMsg(buffer, rcvLength);
-			string decryptingMsg = decryptString(encryptedMsg, ENCRYPTION_KEY);
+			string decryptedMsg = decryptString(encryptedMsg, ENCRYPTION_KEY);
 			cout << decryptedMsg << endl;
 		}
 	}
@@ -185,6 +189,4 @@ int main() {
 	WSACleanup();
 
 	return 0;
-
 }
-
