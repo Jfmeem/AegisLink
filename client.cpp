@@ -1,192 +1,277 @@
+#define NOMINMAX
 #include<iostream>
 #include<winsock2.h>
-#include<wS2tcpip.h>
+#include<ws2tcpip.h>
 #include<string>
 #include<thread>
+#include<mutex>
 #include<cstdio>
 #include<limits>
-#include<algorithm>
+#include<iomanip>
+#include<sstream>
 #include "DES.h"
+#include "AES.h"
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
 
-//shared encryption key
 const string ENCRYPTION_KEY = "mykey123";
+bool isRunning = true;
+//bool showProof = false;
+mutex consoleMutex;
 
-//initialization
 bool Initialization() {
-
-	WSADATA data;
-	return WSAStartup(MAKEWORD(2, 2), &data) == 0;
-
+    WSADATA data;
+    return WSAStartup(MAKEWORD(2, 2), &data) == 0;
 }
 
-void SendFile(SOCKET s) {
-	if (cin.peek() == '\n') cin.ignore();
-	string filename;
-	cout << "Enter file name to send: ";
-	getline(cin, filename);
-
-	FILE* fp;
-	fopen_s(&fp, filename.c_str(), "rb");
-	if (fp == NULL) {
-		cout << "File not found!" << endl;
-		return;
-	}
-
-	//get file size
-	fseek(fp, 0, SEEK_END);
-	long filesize = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-
-	//read entire file into memory
-	char* fileData = new char[filesize];
-	fread(fileData, 1, filesize, fp);
-	fclose(fp);
-
-	//convert file data to string for encryption
-	string fileContent(fileData, filesize);
-	delete[] fileData;
-	//encrypt the file content
-	cout << "Encrypting file..."<<endl;
-	string encryptedContent = encryptString(fileContent, ENCRYPTION_KEY);
-
-	//send file transfer cmd
-	string cmd = "file_transfer";
-	string encryptedCmd = encryptString(cmd, ENCRYPTION_KEY);
-	send(s, encryptedCmd.c_str(), encryptedCmd.size(), 0);
-	Sleep(100);
-
-	//send filename length
-	int filenamelen = filename.size();
-	send(s, reinterpret_cast<char*>(&filenamelen), sizeof(filenamelen), 0);
-	send(s, filename.c_str(), filenamelen, 0);
-
-	//send encrypted file size
-	long encryptedSize = encryptedContent.size();
-	send(s, reinterpret_cast<char*>(&encryptedSize), sizeof(encryptedSize), 0);
-
-	////send file size
-	//send(s, reinterpret_cast<char*>(&filesize), sizeof(filesize), 0);
-
-	cout << "Sending encrypted file...." << endl;
-	const char* dataPtr = encryptedContent.c_str();
-	long totalSent = 0;
-	while (totalSent < encryptedSize) {
-		long remaining = encryptedSize - totalSent; 
-		int chunkSize = (remaining < 1024L) ? (int)remaining : 1024;
-		int sent = send(s, dataPtr + totalSent, chunkSize, 0);
-		if (sent == SOCKET_ERROR) {
-			cout << "Error sending file!" << endl;
-			return;
-		}
-		totalSent += sent;
-	}
-
-	cout << "File encrypted and sent successfully!" << endl;
-	return;
+static bool sendAll(SOCKET s, const char* buf, int len) {
+    int total = 0;
+    while (total < len) {
+        int r = send(s, buf + total, len - total, 0);
+        if (r == SOCKET_ERROR) return false;
+        total += r;
+    }
+    return true;
 }
 
-void SendMsg(SOCKET s) {
-	cout << "Enter your name: ";
-	string name;
-	getline(cin, name);
-	string message;
+static bool recvAll(SOCKET s, char* buf, int len) {
+    int total = 0;
+    while (total < len) {
+        int r = recv(s, buf + total, len - total, 0);
+        if (r <= 0) return false;
+        total += r;
+    }
+    return true;
+}
 
-	while (1) {
-		getline(cin, message);
+/*
+string toHex(const string& data, int maxBytes = 24) {
+    ostringstream oss;
+    int limit = min((int)data.size(), maxBytes);
+    for (int i = 0; i < limit; i++)
+        oss << hex << setw(2) << setfill('0') << (int)(unsigned char)data[i] << " ";
+    if ((int)data.size() > maxBytes) oss << "...";
+    return oss.str();
+}
 
-		// file send cmd 
-		if (message == "sendfile") {
-			SendFile(s);
-			/*thread t(SendFile, s);
-			t.detach();*/
-			continue;
-		}
-		string msg = name + " : " + message;
+void printProof(const string& plaintext, const string& ciphertext, const string& encType) {
+    cout << "\n+--------------------------------------------------+" << endl;
+    cout << "  ENCRYPTION PROOF (" << encType << ")"               << endl;
+    cout << "+--------------------------------------------------+" << endl;
+    cout << "  [PLAINTEXT]  " << plaintext                          << endl;
+    cout << "  [HEX PLAIN]  " << toHex(plaintext)                  << endl;
+    cout << "  [ENCRYPTED]  " << toHex(ciphertext)                 << endl;
+    cout << "  [KEY USED]   " << ENCRYPTION_KEY                    << endl;
+    cout << "+--------------------------------------------------+" << endl;
+    cout << "  ^ This scrambled hex is what travels over network" << endl;
+    cout << "+--------------------------------------------------+\n" << endl;
+}
 
-		//encrypt the msg
-		string encryptedMsg = encryptString(msg, ENCRYPTION_KEY);
-		//send encrypted msg
-		int bytesent = send(s,encryptedMsg.c_str(), encryptedMsg.size(), 0);
-		if (bytesent == SOCKET_ERROR) {
-			cout << "Error sending message!" << endl;
-			break;
-		}
+void printRecvProof(const string& ciphertext, const string& plaintext, const string& encType) {
+    cout << "\n+--------------------------------------------------+" << endl;
+    cout << "  RECEIVED & DECRYPTED (" << encType << ")"           << endl;
+    cout << "+--------------------------------------------------+" << endl;
+    cout << "  [ENC HEX]    " << toHex(ciphertext)                 << endl;
+    cout << "  [DECRYPTED]  " << plaintext                         << endl;
+    cout << "+--------------------------------------------------+\n" << endl;
+}
+*/
 
-		if (message == "Quit") {
-			cout << "Stopping the application." << endl;
-			break;
-		}
-	}
+void sendMessage(SOCKET s, const string& name, const string& text, int encChoice) {
+    string encType = (encChoice == 1) ? "DES" : "AES";
+    string msg = name + " : " + text;
 
+    string encryptedMsg;
+    if (encChoice == 1)
+        encryptedMsg = encryptString(msg, ENCRYPTION_KEY);
+    else
+        encryptedMsg = encryptStringAES(msg, ENCRYPTION_KEY);
+
+    //if (showProof) printProof(msg, encryptedMsg, encType);
+
+    int payloadLen = (int)encryptedMsg.size();
+    string packet;
+    packet += (char)encChoice;
+    packet.append(reinterpret_cast<char*>(&payloadLen), sizeof(payloadLen));
+    packet += encryptedMsg;
+
+    sendAll(s, packet.c_str(), (int)packet.size());
+}
+
+void sendFile(SOCKET s, const string& filepath, int encChoice) {
+    string encType = (encChoice == 1) ? "DES" : "AES";
+
+    FILE* fp;
+    fopen_s(&fp, filepath.c_str(), "rb");
+    if (!fp) { cout << "[Error] File not found." << endl; return; }
+
+    fseek(fp, 0, SEEK_END);
+    long filesize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    char* fileData = new char[filesize];
+    fread(fileData, 1, filesize, fp);
+    fclose(fp);
+
+    string fileContent(fileData, filesize);
+    delete[] fileData;
+
+    string filename = filepath;
+    size_t slashPos = filepath.find_last_of("/\\");
+    if (slashPos != string::npos) filename = filepath.substr(slashPos + 1);
+
+    string encryptedContent;
+    if (encChoice == 1)
+        encryptedContent = encryptString(fileContent, ENCRYPTION_KEY);
+    else
+        encryptedContent = encryptStringAES(fileContent, ENCRYPTION_KEY);
+    /*
+    if (showProof) {
+        cout << "\n+--------------------------------------------------+" << endl;
+        cout << "  FILE ENCRYPTION PROOF (" << encType << ")"           << endl;
+        cout << "+--------------------------------------------------+" << endl;
+        cout << "  [FILE]       " << filename                            << endl;
+        cout << "  [ORIGINAL]   " << filesize << " bytes"               << endl;
+        cout << "  [ENCRYPTED]  " << encryptedContent.size() << " bytes"<< endl;
+        cout << "  [PLAIN HEX]  " << toHex(fileContent)                 << endl;
+        cout << "  [ENC HEX]    " << toHex(encryptedContent)            << endl;
+        cout << "  [KEY USED]   " << ENCRYPTION_KEY                     << endl;
+        cout << "+--------------------------------------------------+\n" << endl;
+    }
+    */
+
+    char header[2] = { (char)0xFF, (char)encChoice };
+    sendAll(s, header, 2);
+
+    int filenameLen = (int)filename.size();
+    sendAll(s, reinterpret_cast<char*>(&filenameLen), sizeof(filenameLen));
+    sendAll(s, filename.c_str(), filenameLen);
+
+    int encryptedSize = (int)encryptedContent.size();
+    sendAll(s, reinterpret_cast<char*>(&encryptedSize), sizeof(encryptedSize));
+    sendAll(s, encryptedContent.c_str(), encryptedSize);
+
+    cout << "[File sent: " << filename << " | " << encType << "]" << endl;
 }
 
 void ReceiveMsg(SOCKET s) {
-	char buffer[9301];
-	int rcvLength;
-	string msg = "";
-	while (1) {
-		rcvLength = recv(s, buffer, sizeof(buffer), 0);
-		if (rcvLength <= 0) {
-			cout << "Disconnected from the server." << endl;
-			break;
-		}
-		else {
-		//decrypt the received msg
-			string encryptedMsg(buffer, rcvLength);
-			string decryptedMsg = decryptString(encryptedMsg, ENCRYPTION_KEY);
-			cout << decryptedMsg << endl;
-		}
-	}
+    while (isRunning) {
+        char marker;
+        if (!recvAll(s, &marker, 1)) {
+            lock_guard<mutex> lock(consoleMutex);
+            cout << "\n[Disconnected from server]" << endl;
+            isRunning = false; break;
+        }
 
+        int payloadLen = 0;
+        if (!recvAll(s, reinterpret_cast<char*>(&payloadLen), sizeof(payloadLen))) {
+            lock_guard<mutex> lock(consoleMutex);
+            isRunning = false; break;
+        }
+
+        if (payloadLen <= 0 || payloadLen > 10 * 1024 * 1024) continue;
+
+        string encryptedMsg(payloadLen, '\0');
+        if (!recvAll(s, &encryptedMsg[0], payloadLen)) {
+            lock_guard<mutex> lock(consoleMutex);
+            isRunning = false; break;
+        }
+
+        string decryptedMsg;
+        string encType;
+        if (marker == 1) {
+            decryptedMsg = decryptString(encryptedMsg, ENCRYPTION_KEY);
+            encType = "DES";
+        }
+        else if (marker == 2) {
+            decryptedMsg = decryptStringAES(encryptedMsg, ENCRYPTION_KEY);
+            encType = "AES";
+        }
+        else {
+            decryptedMsg = "[Unknown]";
+            encType = "?";
+        }
+
+        lock_guard<mutex> lock(consoleMutex);
+
+        //if (showProof)
+        //    printRecvProof(encryptedMsg, decryptedMsg, encType);
+        //else
+        
+        cout << "\n>> " << decryptedMsg << "\n> " << flush;
+    }
+}
+
+void ChatLoop(SOCKET s) {
+    cout << "\nEnter your name: ";
+    string name;
+    getline(cin, name);
+
+    int encChoice = 0;
+    while (encChoice != 1 && encChoice != 2) {
+        cout << "Choose encryption (1=DES / 2=AES): ";
+        cin >> encChoice;
+        cin.ignore((numeric_limits<streamsize>::max)(), '\n');
+        if (encChoice != 1 && encChoice != 2)
+            cout << "Enter 1 or 2." << endl;
+    }
+    string encType = (encChoice == 1) ? "DES" : "AES";
+
+    cout << "\n[Chat ready | " << name << " | " << encType << "]" << endl;
+    cout << "  /file <path> - send a file" << endl;
+    cout << "  /quit        - exit" << endl;
+    // cout << "  /proof       - toggle encryption proof on/off" << endl;  // <-- PROOF
+    cout << "------------------------------------------" << endl;
+
+    while (isRunning) {
+        cout << "> ";
+        string input;
+        if (!getline(cin, input)) break;
+        if (input.empty()) continue;
+
+        if (input == "/quit") {
+            cout << "Exiting..." << endl;
+            isRunning = false;
+            break;
+        }
+        //else if (input == "/proof") {
+        //    showProof = !showProof;
+        //    cout << "[Proof mode: " << (showProof ? "ON" : "OFF") << "]" << endl;
+        //}
+        else if (input.rfind("/file ", 0) == 0) {
+            sendFile(s, input.substr(6), encChoice);
+        }
+        else {
+            sendMessage(s, name, input, encChoice);
+        }
+    }
 }
 
 int main() {
-	
-	cout << "----Encrypted Client----" <<endl;
-	cout << "client program started!" << endl;
+    cout << "--- ENCRYPTED CHAT (DES & AES) ---" << endl;
 
-	if (!Initialization()) {
-		cout << "initialization failed!" << endl;
+    if (!Initialization()) { cout << "Initialization failed!" << endl; return 1; }
 
-		return 1;
-	}
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) { cout << "Socket creation failed!" << endl; return 1; }
 
-	//create socket 
-	SOCKET s;
+    sockaddr_in serveraddr;
+    serveraddr.sin_family = AF_INET;
+    serveraddr.sin_port = htons(314159);
+    inet_pton(AF_INET, "127.0.0.1", &(serveraddr.sin_addr));
 
-	s = socket(AF_INET, SOCK_STREAM, 0);
-	if (s == INVALID_SOCKET) {
-		cout << "socket creation failed!" << endl;
-		return 1;
-	}
+    if (connect(s, reinterpret_cast<sockaddr*>(&serveraddr), sizeof(serveraddr)) == SOCKET_ERROR) {
+        cout << "Unable to connect to the server!" << endl;
+        closesocket(s); WSACleanup(); return 1;
+    }
 
-	string serveraddress = "127.0.0.1";
-	int port = 314159;
-	sockaddr_in serveraddr;
-	serveraddr.sin_family = AF_INET;
-	serveraddr.sin_port = htons(port);
-	inet_pton(AF_INET, serveraddress.c_str(), &(serveraddr.sin_addr));
+    cout << "Connected to server!" << endl;
 
-	if (connect(s, reinterpret_cast<sockaddr*>(&serveraddr), sizeof(serveraddr)) == SOCKET_ERROR) {
-		cout << "not able to connect the server!" << endl;
-		closesocket(s);
-		WSACleanup();
-		return 1;
-	}
+    thread receiveThread(ReceiveMsg, s);
+    ChatLoop(s);
 
-	cout << "successfully connect to the server!" << endl;
-	cout << "All messages and files will be encrypted with DES" << endl;
-
-	//creating thread
-	thread senderthread(SendMsg, s);
-	thread receivethread(ReceiveMsg, s);
-	senderthread.join();
-	receivethread.join();
-
-	closesocket(s);
-	WSACleanup();
-
-	return 0;
+    isRunning = false;
+    closesocket(s);
+    receiveThread.join();
+    WSACleanup();
+    return 0;
 }

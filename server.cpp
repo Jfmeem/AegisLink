@@ -1,186 +1,272 @@
+#define NOMINMAX
 #include<iostream>
 #include<winsock2.h>
 #include<ws2tcpip.h>
-#include <tchar.h>
+#include<tchar.h>
 #include<thread>
+#include<mutex>
 #include<vector>
 #include<algorithm>
 #include<cstdio>
 #include "DES.h"
+#include "AES.h"
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
 
 const string ENCRYPTION_KEY = "mykey123";
+mutex clientsMutex;
+mutex consoleMutex;
 
-//step-1: initialize 
 bool Initialize() {
-	WSADATA data; //structure for winsock info
-	int res = WSAStartup(MAKEWORD(2, 2), &data); // starrt winsock library
-	return (res == 0); //if true return success
-
-}
-//function to receive and decrypt file
-void recievedFile(SOCKET clientSocket) {
-	int filenameLen;
-	recv(clientSocket, reinterpret_cast<char*>(&filenameLen), sizeof(filenameLen), 0);
-
-	char fname[256];
-	recv(clientSocket, fname, filenameLen, 0);
-	fname[filenameLen] = '\0';
-
-	long encryptedFilesize;
-	recv(clientSocket, reinterpret_cast<char*>(&encryptedFilesize), sizeof(encryptedFilesize), 0);
-
-	cout << "Receiving encrypted file: " << fname << "(" << encryptedFilesize << " bytes)" <<endl;
-	//received encrypted file data
-	char* encryptedData = new char[encryptedFilesize];
-	long totalReceived = 0;
-
-	while (totalReceived < encryptedFilesize) {
-		int bytes = recv(clientSocket, encryptedData + totalReceived, encryptedFilesize - totalReceived, 0);
-		if (bytes <= 0) {
-			cout << "client disconnected during file transfer." << endl;
-			delete[] encryptedData;
-			return;
-		}
-		totalReceived += bytes; 
-	}
-	//decrypting the file content
-	cout << "Decrypting file..." << endl;
-	string encryptedContent(encryptedData, encryptedFilesize);
-	delete[] encryptedData;
-
-	string decryptedContent = decryptString(encryptedContent, ENCRYPTION_KEY);
-
-	FILE* fp;
-	fopen_s(&fp, fname, "wb");
-	if (!fp) {
-		cout << "Could not open file for writing." << endl;
-	}
-	
-	fwrite(decryptedContent.c_str(), 1, decryptedContent.size(), fp);
-	fclose(fp);
-
-	cout << "File \"" << fname << "\" received and decrypted successfully!" << endl;
-
-	
+    WSADATA data;
+    return WSAStartup(MAKEWORD(2, 2), &data) == 0;
 }
 
-void InterectWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
-	//send/rcv client
-	cout << "Client connected" << endl;
+static bool recvAll(SOCKET s, char* buf, int len) {
+    int total = 0;
+    while (total < len) {
+        int r = recv(s, buf + total, len - total, 0);
+        if (r <= 0) return false;
+        total += r;
+    }
+    return true;
+}
 
-	char buffer[9301];
-	
-	while (1) {
-		int byterecvd = recv(clientSocket, buffer, sizeof(buffer), 0);
-		if (byterecvd <= 0) {
-			cout << "Client Disconnected!" << endl;
-			break;
-		}
-		
-		//received encrypted data
-		string encryptedMessage(buffer, byterecvd);
+static bool sendAll(SOCKET s, const char* buf, int len) {
+    int total = 0;
+    while (total < len) {
+        int r = send(s, buf + total, len - total, 0);
+        if (r == SOCKET_ERROR) return false;
+        total += r;
+    }
+    return true;
+}
 
-		//decrypt the msg
-		string decryptedMessage = decryptString(encryptedMessage, ENCRYPTION_KEY);
+void receiveFile(SOCKET clientSocket, int encType) {
+    string encMethod = (encType == 1) ? "DES" : "AES";
 
-		//check for file transfer command
-		if (decryptedMessage == "file_transfer") {
-			recievedFile(clientSocket);
-			continue;
-		}
+    int filenameLen = 0;
+    if (!recvAll(clientSocket, reinterpret_cast<char*>(&filenameLen), sizeof(filenameLen))) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Error receiving filename length." << endl;
+        return;
+    }
+    if (filenameLen <= 0 || filenameLen >= 512) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Invalid filename length: " << filenameLen << endl;
+        return;
+    }
 
-		cout << "Message (decrypted): " << decryptedMessage << endl;
+    char fname[512];
+    if (!recvAll(clientSocket, fname, filenameLen)) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Error receiving filename." << endl;
+        return;
+    }
+    fname[filenameLen] = '\0';
 
-		//broadcast to other clients(keep it encrypted for transmission
-		for (auto client : Clients) {
-			if (client != clientSocket) {
-				send(client, encryptedMessage.c_str(), encryptedMessage.size(), 0);
-			}
-		}
+    string safeFilename(fname);
+    size_t slashPos = safeFilename.find_last_of("/\\");
+    if (slashPos != string::npos)
+        safeFilename = safeFilename.substr(slashPos + 1);
+    if (safeFilename.empty()) safeFilename = "received_file";
 
-	}
+    int encryptedFilesize = 0;
+    if (!recvAll(clientSocket, reinterpret_cast<char*>(&encryptedFilesize), sizeof(encryptedFilesize))) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Error receiving file size." << endl;
+        return;
+    }
+    if (encryptedFilesize <= 0 || encryptedFilesize > 100 * 1024 * 1024) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Invalid file size: " << encryptedFilesize << endl;
+        return;
+    }
 
-	//Remove disconnected client
-	auto it = find(Clients.begin(), Clients.end(), clientSocket);
-	if (it != Clients.end()) {
-		Clients.erase(it);
-	}
+    {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Receiving encrypted file: " << safeFilename
+            << " (" << encryptedFilesize << " bytes) [" << encMethod << "]" << endl;
+    }
 
-	closesocket(clientSocket);
+    char* encryptedData = new char[encryptedFilesize];
+    if (!recvAll(clientSocket, encryptedData, encryptedFilesize)) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Client disconnected during file transfer." << endl;
+        delete[] encryptedData;
+        return;
+    }
+
+    string encryptedContent(encryptedData, encryptedFilesize);
+    delete[] encryptedData;
+
+    string decryptedContent;
+    if (encType == 1)
+        decryptedContent = decryptString(encryptedContent, ENCRYPTION_KEY);
+    else
+        decryptedContent = decryptStringAES(encryptedContent, ENCRYPTION_KEY);
+
+    FILE* fp;
+    fopen_s(&fp, safeFilename.c_str(), "wb");
+    if (!fp) {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Could not open file for writing: " << safeFilename << endl;
+        return;
+    }
+    fwrite(decryptedContent.c_str(), 1, decryptedContent.size(), fp);
+    fclose(fp);
+
+    lock_guard<mutex> lock(consoleMutex);
+    cout << "File \"" << safeFilename << "\" saved successfully! [" << encMethod << "]" << endl;
+}
+
+void InteractWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
+    {
+        lock_guard<mutex> lock(consoleMutex);
+        cout << "Client connected." << endl;
+    }
+
+    while (true) {
+        char marker;
+        if (!recvAll(clientSocket, &marker, 1)) {
+            lock_guard<mutex> lock(consoleMutex);
+            cout << "Client Disconnected!" << endl;
+            break;
+        }
+
+        if ((unsigned char)marker == 0xFF) {
+            char encTypeByte;
+            if (!recvAll(clientSocket, &encTypeByte, 1)) {
+                lock_guard<mutex> lock(consoleMutex);
+                cout << "Client disconnected during file transfer handshake." << endl;
+                break;
+            }
+            receiveFile(clientSocket, (int)(unsigned char)encTypeByte);
+            continue;
+        }
+
+        if (marker == 1 || marker == 2) {
+            int payloadLen = 0;
+            if (!recvAll(clientSocket, reinterpret_cast<char*>(&payloadLen), sizeof(payloadLen))) {
+                lock_guard<mutex> lock(consoleMutex);
+                cout << "Client Disconnected!" << endl;
+                break;
+            }
+
+            if (payloadLen <= 0 || payloadLen > 10 * 1024 * 1024) {
+                lock_guard<mutex> lock(consoleMutex);
+                cout << "[Warning] Invalid payload length: " << payloadLen << ", skipping." << endl;
+                continue;
+            }
+
+            string encryptedMessage(payloadLen, '\0');
+            if (!recvAll(clientSocket, &encryptedMessage[0], payloadLen)) {
+                lock_guard<mutex> lock(consoleMutex);
+                cout << "Client Disconnected!" << endl;
+                break;
+            }
+
+            string decryptedMessage;
+            if (marker == 1)
+                decryptedMessage = decryptString(encryptedMessage, ENCRYPTION_KEY);
+            else
+                decryptedMessage = decryptStringAES(encryptedMessage, ENCRYPTION_KEY);
+
+            {
+                lock_guard<mutex> lock(consoleMutex);
+                cout << "[" << (marker == 1 ? "DES" : "AES") << "] "
+                    << decryptedMessage << endl;
+            }
+
+            string packet;
+            packet += marker;
+            packet.append(reinterpret_cast<const char*>(&payloadLen), sizeof(payloadLen));
+            packet += encryptedMessage;
+
+            lock_guard<mutex> lock(clientsMutex);
+            for (auto client : Clients) {
+                if (client != clientSocket) {
+                    sendAll(client, packet.c_str(), (int)packet.size());
+                }
+            }
+        }
+        else {
+            lock_guard<mutex> lock(consoleMutex);
+            cout << "[Warning] Unknown packet marker: "
+                << (int)(unsigned char)marker << ", skipping." << endl;
+        }
+    }
+
+    {
+        lock_guard<mutex> lock(clientsMutex);
+        auto it = find(Clients.begin(), Clients.end(), clientSocket);
+        if (it != Clients.end())
+            Clients.erase(it);
+    }
+    closesocket(clientSocket);
 }
 
 int main() {
-	cout << "---Encrypted server---"<<endl;
-	cout << "Using DES encryption"<<endl;
+    cout << "   ENCRYPTED SERVER - DES & AES Support  " << endl;
 
-	if (!Initialize()) {
-		cout << " winsock Initialization failed" << endl;
-		return 1;
-	}
+    if (!Initialize()) {
+        cout << "Winsock Initialization failed" << endl;
+        return 1;
+    }
 
-	//cretaing socket
+    SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (listenSocket == INVALID_SOCKET) {
+        cout << "Socket creation failed!" << endl;
+        return 1;
+    }
 
-	SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, 0);
+    int port = 314159;
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
 
-	if (listenSocket == INVALID_SOCKET) {
-		cout << "Socket creation failed!" << endl;
-		return 1;
-	}
+    if (InetPton(AF_INET, _T("0.0.0.0"), &serverAddr.sin_addr) != 1) {
+        cout << "Setting address structure failed" << endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return 1;
+    }
 
-	//create address structure
-	int port = 314159;
-	sockaddr_in serverAddr;
-	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_port = htons(port);
+    if (bind(listenSocket, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
+        cout << "Bind failed!" << endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return 1;
+    }
 
+    if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
+        cout << "Listen failed!" << endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return 1;
+    }
 
-	//convert the ip address(0.0.0.0) put it inside sin_family into binary formate
-	if (InetPton(AF_INET, _T("0.0.0.0"), &serverAddr.sin_addr) != 1) {
-		cout << "setting address structure failed" << endl;
-		closesocket(listenSocket);
-		WSACleanup();
-		return 1;
-	}
+    cout << "Server started on port: " << port << endl;
+    cout << "Supports DES and AES encryption" << endl;
+    cout << "Waiting for clients...\n" << endl;
 
-	//bind
-	if (bind(listenSocket, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
-		cout << "Bind failed!" << endl;
-		closesocket(listenSocket);
-		WSACleanup();
-		return 1;
-	}
+    vector<SOCKET> Clients;
 
-	//listen
-	if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
-		cout << "Listen failed!" << endl;
-		closesocket(listenSocket);
-		WSACleanup();
-		return 1;
-	}
+    while (true) {
+        SOCKET clientSocket = accept(listenSocket, NULL, NULL);
+        if (clientSocket == INVALID_SOCKET) {
+            cout << "Failed to accept client." << endl;
+            continue;
+        }
+        {
+            lock_guard<mutex> lock(clientsMutex);
+            Clients.push_back(clientSocket);
+        }
+        thread t1(InteractWithClient, clientSocket, ref(Clients));
+        t1.detach();
+    }
 
-	cout << "server has started listening on port:" << port << endl;
-	cout <<"All communication will be encrypted with DES" << endl;
-
-	//for multiple client msg
-	vector<SOCKET> Clients;
-
-
-	//accept
-	while (1) {
-
-		SOCKET clientSocket = accept(listenSocket, NULL, NULL);
-		if (clientSocket == INVALID_SOCKET) {
-			cout << "failed to accept client." << endl;
-			continue;
-		}
-		Clients.push_back(clientSocket);
-		thread t1(InterectWithClient, clientSocket, ref(Clients));
-		t1.detach();
-
-	}
-	closesocket(listenSocket);
-	WSACleanup();
-	return 0;
+    closesocket(listenSocket);
+    WSACleanup();
+    return 0;
 }
