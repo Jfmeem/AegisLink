@@ -11,6 +11,8 @@
 #include<sstream>
 #include "DES.h"
 #include "AES.h"
+#include "sha512.h"
+
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
 
@@ -81,13 +83,15 @@ void sendMessage(SOCKET s, const string& name, const string& text, int encChoice
     string encType = (encChoice == 1) ? "DES" : "AES";
     string msg = name + " : " + text;
 
+    string msgWithHash = attachHash(msg);
+
     string encryptedMsg;
     if (encChoice == 1)
-        encryptedMsg = encryptString(msg, ENCRYPTION_KEY);
+        encryptedMsg = encryptString(msgWithHash, ENCRYPTION_KEY);
     else
-        encryptedMsg = encryptStringAES(msg, ENCRYPTION_KEY);
+        encryptedMsg = encryptStringAES(msgWithHash, ENCRYPTION_KEY);
 
-    //if (showProof) printProof(msg, encryptedMsg, encType);
+    //if (showProof) printProof(msgWithHash, encryptedMsg, encType);
 
     int payloadLen = (int)encryptedMsg.size();
     string packet;
@@ -119,11 +123,12 @@ void sendFile(SOCKET s, const string& filepath, int encChoice) {
     size_t slashPos = filepath.find_last_of("/\\");
     if (slashPos != string::npos) filename = filepath.substr(slashPos + 1);
 
+    string fileWithHash = attachHash(fileContent);
     string encryptedContent;
     if (encChoice == 1)
-        encryptedContent = encryptString(fileContent, ENCRYPTION_KEY);
+        encryptedContent = encryptString(fileWithHash, ENCRYPTION_KEY);
     else
-        encryptedContent = encryptStringAES(fileContent, ENCRYPTION_KEY);
+        encryptedContent = encryptStringAES(fileWithHash, ENCRYPTION_KEY);
     /*
     if (showProof) {
         cout << "\n+--------------------------------------------------+" << endl;
@@ -191,13 +196,21 @@ void ReceiveMsg(SOCKET s) {
             encType = "?";
         }
 
+        string cleanMsg;
+        bool intact = verifyHash(decryptedMsg, cleanMsg);
+
         lock_guard<mutex> lock(consoleMutex);
 
         //if (showProof)
         //    printRecvProof(encryptedMsg, decryptedMsg, encType);
         //else
         
-        cout << "\n>> " << decryptedMsg << "\n> " << flush;
+        if (intact) {
+            cout << "\n>> " << cleanMsg << "\n> " << flush;
+        }
+        else {
+            cout << "\n [TAMPERED!] " << cleanMsg << "\n " << flush;
+        }
     }
 }
 

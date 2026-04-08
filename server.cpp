@@ -10,6 +10,7 @@
 #include<cstdio>
 #include "DES.h"
 #include "AES.h"
+#include "sha512.h"
 using namespace std;
 #pragma comment(lib, "ws2_32.lib")
 
@@ -106,6 +107,16 @@ void receiveFile(SOCKET clientSocket, int encType) {
     else
         decryptedContent = decryptStringAES(encryptedContent, ENCRYPTION_KEY);
 
+    string cleanContent;
+    bool intact = verifyHash(decryptedContent, cleanContent);
+    {
+        lock_guard<mutex> lock(consoleMutex);
+        if (intact)
+            cout << "[INTACT] File integrity verified: " << safeFilename << endl;
+        else
+            cout << "[TAMPERED!] File integrity check failed: " << safeFilename << endl;
+    }
+
     FILE* fp;
     fopen_s(&fp, safeFilename.c_str(), "wb");
     if (!fp) {
@@ -113,7 +124,7 @@ void receiveFile(SOCKET clientSocket, int encType) {
         cout << "Could not open file for writing: " << safeFilename << endl;
         return;
     }
-    fwrite(decryptedContent.c_str(), 1, decryptedContent.size(), fp);
+    fwrite(cleanContent.c_str(), 1, cleanContent.size(), fp);
     fclose(fp);
 
     lock_guard<mutex> lock(consoleMutex);
@@ -172,10 +183,14 @@ void InteractWithClient(SOCKET clientSocket, vector<SOCKET>& Clients) {
             else
                 decryptedMessage = decryptStringAES(encryptedMessage, ENCRYPTION_KEY);
 
+            string cleanMessage;
+            bool intact = verifyHash(decryptedMessage, cleanMessage);
             {
                 lock_guard<mutex> lock(consoleMutex);
-                cout << "[" << (marker == 1 ? "DES" : "AES") << "] "
-                    << decryptedMessage << endl;
+                if (intact)
+                    cout << "[INTACT][" << (marker == 1 ? "DES" : "AES") << "] " << cleanMessage << endl;
+                else
+                    cout << "[TAMPERED!][" << (marker == 1 ? "DES" : "AES") << "] " << cleanMessage << endl;
             }
 
             string packet;
