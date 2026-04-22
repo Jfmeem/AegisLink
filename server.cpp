@@ -235,7 +235,7 @@ int main() {
         return 1;
     }
 
-    int port = 314159;
+    int port = 346;
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(port);

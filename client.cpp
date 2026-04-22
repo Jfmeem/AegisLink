@@ -86,11 +86,12 @@ void sendMessage(SOCKET s, const string& name, const string& text, int encChoice
     string msgWithHash = attachHash(msg);
 
     string encryptedMsg;
-    if (encChoice == 1)
+    if (encChoice == 1){
         encryptedMsg = encryptString(msgWithHash, ENCRYPTION_KEY);
-    else
+    } 
+    else{
         encryptedMsg = encryptStringAES(msgWithHash, ENCRYPTION_KEY);
-
+    }
     //if (showProof) printProof(msgWithHash, encryptedMsg, encType);
 
     int payloadLen = (int)encryptedMsg.size();
@@ -107,7 +108,9 @@ void sendFile(SOCKET s, const string& filepath, int encChoice) {
 
     FILE* fp;
     fopen_s(&fp, filepath.c_str(), "rb");
-    if (!fp) { cout << "[Error] File not found." << endl; return; }
+    if (!fp){
+        cout << "[Error] File not found." << endl; return;
+    }
 
     fseek(fp, 0, SEEK_END);
     long filesize = ftell(fp);
@@ -269,7 +272,7 @@ int main() {
 
     sockaddr_in serveraddr;
     serveraddr.sin_family = AF_INET;
-    serveraddr.sin_port = htons(314159);
+    serveraddr.sin_port = htons(346);
     inet_pton(AF_INET, "127.0.0.1", &(serveraddr.sin_addr));
 
     if (connect(s, reinterpret_cast<sockaddr*>(&serveraddr), sizeof(serveraddr)) == SOCKET_ERROR) {
